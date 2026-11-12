@@ -1,0 +1,89 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include "esp_wifi.h"
+
+// Tên gốc theo yêu cầu
+const char* baseSSID = "Cá dồ là của anh Kha";
+
+// Kênh phát sóng Wi-Fi (Chọn kênh 6)
+#define WIFI_CHANNEL 6
+
+// Tổng số bản ghi (30 mạng)
+#define TOTAL_NETWORKS 30
+
+// Mảng chứa các ký tự/dấu phụ đi kèm để phân biệt từng mạng trên điện thoại
+const char* suffixList[30] = {
+  ".", ",", ";", "'", "..", ",,", ";;", "''", ".,", ";'", 
+  ".'", ",;", ".,;", ".,'", ";.,", "'..", ".,''", ";;.", "'..;", ".,;',",
+  ".';", ",.'", ";,.", "'.,", ".,;'", ";.,'", "'.,;", ".,;''", ";.,''", ".,;',."
+};
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("AnhKha_AP", "12345678");
+
+  esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+
+  Serial.println(F("================================"));
+  Serial.println(F("WIFI SSID MULTI GENERATOR - ANH KHA"));
+  Serial.println(F("STATUS: RUNNING 30 UNIQUE NETWORKS..."));
+  Serial.println(F("================================\n"));
+}
+
+void loop() {
+  // Vòng lặp phát lần lượt đúng 30 bản ghi với 30 tên kết hợp ký tự đặc biệt khác nhau
+  for (int i = 0; i < TOTAL_NETWORKS; i++) {
+    
+    // Tạo chuỗi SSID hoàn chỉnh bằng cách ghép tên gốc với các ký tự đặc biệt
+    String currentSSID = String(baseSSID) + " " + String(suffixList[i]);
+    int ssidLen = currentSSID.length();
+    if (ssidLen > 32) ssidLen = 32; // Giới hạn tối đa 32 ký tự theo chuẩn WiFi
+
+    // Khung gói tin Beacon giả mạo chuẩn 802.11 với MAC đổi động theo i
+    uint8_t beaconPacket[128] = {
+      0x80, 0x00, 0x00, 0x00,                       // Frame Control
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff,           // Receiver Address (Broadcast)
+      0x00, 0xAA, 0xBB, 0xCC, 0x10, (uint8_t)(i + 1), // Source Address (MAC giả)
+      0x00, 0xAA, 0xBB, 0xCC, 0x10, (uint8_t)(i + 1), // BSSID
+      0x00, 0x00,                                   // Sequence Control
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Timestamp
+      0x64, 0x00,                                   // Beacon Interval
+      0x31, 0x04                                    // Capability Information
+    };
+
+    int basePacketSize = 36;
+    
+    // Tag 0: SSID Parameter Set
+    beaconPacket[36] = 0x00; 
+    beaconPacket[37] = ssidLen; 
+    
+    for (int j = 0; j < ssidLen; j++) {
+      beaconPacket[38 + j] = currentSSID[j];
+    }
+    int currentPacketSize = basePacketSize + 2 + ssidLen;
+
+    // Supported Rates & DS Parameter Set
+    uint8_t tagExtras[] = {
+      0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24, 
+      0x03, 0x01, (uint8_t)WIFI_CHANNEL                           
+    };
+
+    for (size_t k = 0; k < sizeof(tagExtras); k++) {
+      beaconPacket[currentPacketSize++] = tagExtras[k];
+    }
+
+    // Hiển thị kết quả lên Serial Monitor
+    Serial.printf("[%03d] %s\n", i + 1, currentSSID.c_str());
+
+    // Gửi gói tin liên tục cho bản ghi này
+    for (int t = 0; t < 2; t++) {
+      esp_wifi_80211_tx(WIFI_IF_AP, beaconPacket, currentPacketSize, false);
+      delayMicroseconds(100);
+    }
+  }
+
+  delay(50);
+}
