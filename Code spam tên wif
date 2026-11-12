@@ -1,0 +1,101 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include "esp_wifi.h"
+
+// Tên gốc theo yêu cầu
+const char* baseSSID = "Cá dồ là của anh Kha";
+
+// Kênh phát sóng Wi-Fi (Chọn kênh 6)
+#define WIFI_CHANNEL 6
+
+// Tổng số bản ghi (30 mạng)
+#define TOTAL_NETWORKS 30
+
+// Tập hợp các ký tự đặc biệt được phép xuất hiện ngẫu nhiên ở đuôi
+const char specialChars[] = ".,;'!?-~_#@";
+
+// Hàm tạo hậu tố ký tự đặc biệt ngẫu nhiên có độ dài từ 1 đến 4 ký tự
+String getRandomSuffix() {
+  int len = random(1, 5); // Độ dài ngẫu nhiên từ 1 đến 4 ký tự
+  String suffix = "";
+  for (int i = 0; i < len; i++) {
+    int index = random(0, sizeof(specialChars) - 1);
+    suffix += specialChars[index];
+  }
+  return suffix;
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  // Khởi tạo bộ sinh số ngẫu nhiên dựa trên chân analog thả nổi
+  randomSeed(analogRead(0));
+
+  // Khởi tạo chế độ Wi-Fi AP với tên theo yêu cầu mới
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("MAI YEU CA DO_", "12345678");
+
+  esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+
+  Serial.println(F("================================"));
+  Serial.println(F("WIFI SSID MULTI GENERATOR - ANH KHA"));
+  Serial.println(F("STATUS: RUNNING 30 DYNAMIC NETWORKS..."));
+  Serial.println(F("================================\n"));
+}
+
+void loop() {
+  // Vòng lặp phát lần lượt đúng 30 bản ghi với các ký tự ngẫu nhiên khác nhau
+  for (int i = 0; i < TOTAL_NETWORKS; i++) {
+    
+    // Ghép tên gốc với một hậu tố ký tự ngẫu nhiên hoàn toàn mới
+    String currentSSID = String(baseSSID) + " " + getRandomSuffix();
+    int ssidLen = currentSSID.length();
+    if (ssidLen > 32) ssidLen = 32; // Giới hạn tối đa 32 ký tự theo chuẩn WiFi
+
+    // Khung gói tin Beacon giả mạo chuẩn 802.11 với MAC đổi động theo biến i
+    uint8_t beaconPacket[128] = {
+      0x80, 0x00, 0x00, 0x00,                       // Frame Control
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff,           // Receiver Address (Broadcast)
+      0x02, (uint8_t)random(1, 255), (uint8_t)random(1, 255), (uint8_t)random(1, 255), (uint8_t)random(1, 255), (uint8_t)(i + 1), // Source Address (MAC ngẫu nhiên)
+      0x02, (uint8_t)random(1, 255), (uint8_t)random(1, 255), (uint8_t)random(1, 255), (uint8_t)random(1, 255), (uint8_t)(i + 1), // BSSID
+      0x00, 0x00,                                   // Sequence Control
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Timestamp
+      0x64, 0x00,                                   // Beacon Interval
+      0x31, 0x04                                    // Capability Information
+    };
+
+    int basePacketSize = 36;
+    
+    // Tag 0: SSID Parameter Set
+    beaconPacket[36] = 0x00; 
+    beaconPacket[37] = ssidLen; 
+    
+    for (int j = 0; j < ssidLen; j++) {
+      beaconPacket[38 + j] = currentSSID[j];
+    }
+    int currentPacketSize = basePacketSize + 2 + ssidLen;
+
+    // Supported Rates & DS Parameter Set
+    uint8_t tagExtras[] = {
+      0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24, 
+      0x03, 0x01, (uint8_t)WIFI_CHANNEL                           
+    };
+
+    for (size_t k = 0; k < sizeof(tagExtras); k++) {
+      beaconPacket[currentPacketSize++] = tagExtras[k];
+    }
+
+    // Hiển thị kết quả lên Serial Monitor
+    Serial.printf("[%03d] %s\n", i + 1, currentSSID.c_str());
+
+    // Gửi gói tin liên tục cho bản ghi này
+    for (int t = 0; t < 2; t++) {
+      esp_wifi_80211_tx(WIFI_IF_AP, beaconPacket, currentPacketSize, false);
+      delayMicroseconds(100);
+    }
+  }
+
+  // Tạm nghỉ ngắn giữa các chu kỳ
+  delay(50);
+}
